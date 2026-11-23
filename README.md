@@ -25,6 +25,35 @@ baserust  ──git tag───▶ rust-content       (Cargo.toml: content = { 
 
 子模块只负责「放在一起、版本对齐」，**不改变上面的依赖方式**：baserust 构建时仍从 GitHub 按 tag 拉 idm / content，basereact 仍从 npm 装 cadenza。
 
+## 一键启动（Docker）
+
+```bash
+docker compose up -d --build      # 首次要编译 Rust release 镜像，约 10–20 分钟
+```
+
+起来后浏览器打开 <http://localhost>（端口见 `NGINX_PORT`），开发默认账号见 `baserust/seed.toml`（如 `superadmin` / `pwd`，仅开发用）。
+
+| 入口 | 地址（默认端口） |
+|---|---|
+| 前端 + API（同源，经 nginx） | <http://localhost> |
+| app 直连 / idm 直连 | <http://localhost:6453> / <http://localhost:6454> |
+| API 文档（Scalar，dev 才挂） | <http://localhost:6453/docs> |
+| Postgres | `localhost:5821` |
+| MinIO 控制台 | <http://localhost:9863> |
+| dbhub MCP | <http://localhost:3777> |
+
+组成：
+
+- `compose.yaml` 用 `include` **原样复用** `baserust/docker-compose.yml`（pg / migrate / nats / minio / app / idm / nginx / dbhub），不复制、不改它；只额外加一个 `web` 服务（`basereact/Dockerfile`，TanStack Start SSR）。
+- `deploy/baserust.override.yml` 把 nginx 的配置换成 `deploy/nginx.conf`：和 `baserust/nginx.conf` 完全相同，只有 `location /` 从 404 改成反代到 `web`。前端和 `/api` 同源，httponly cookie 不跨域。
+- 端口、凭据在 `.env.compose` 里改（或用同名环境变量临时覆盖）。后端 `${VAR}` 只从这份取，不读 `baserust/.env`（那份给本机 `just dev` 用）。
+
+baserust 改了 `nginx.conf` 之后，跑一下 `bash scripts/check-nginx-drift.sh` 看 `deploy/nginx.conf` 要不要同步。
+
+停止：`docker compose down`（保留数据卷）；连数据一起清：`docker compose down -v`。
+
+> 前端改完要看效果，日常更快的是本机 `pnpm dev`（见下文「本地联调」）；compose 适合整栈验收、给别人演示。
+
 ## 拉取
 
 ```bash

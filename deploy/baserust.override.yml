@@ -1,0 +1,10 @@
+# 叠加在 baserust/docker-compose.yml 之上(compose include 的 path 列表合并)。
+# 注意:本文件里的相对路径按 **baserust/** 目录解析(include 的 project_directory = 列表第一个文件所在目录)。
+services:
+  nginx:
+    depends_on:
+      web:
+        condition: service_started
+    volumes:
+      # 同一个容器内路径 → 覆盖 baserust 自带的 nginx.conf(compose 按 target 合并 volumes)
+      - ../deploy/nginx.conf:/etc/nginx/nginx.conf:ro

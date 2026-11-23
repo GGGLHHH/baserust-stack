@@ -1,0 +1,31 @@
+# baserust 全家桶一键启动:docker compose up -d --build
+#
+#   浏览器  →  nginx(:${NGINX_PORT:-80})
+#               ├─ /api/v1/{public,frontend,admin}/auth/*  → idm
+#               ├─ /api/*                                  → app
+#               ├─ /content/*                              → minio(仅 presign 相对 URL 时用)
+#               ├─ /health                                 → app
+#               └─ /*                                      → web(basereact SSR)
+#   app / idm → pg · nats · minio ;migrate / minio-init 一次性任务
+#
+# 后端整栈直接复用 baserust/docker-compose.yml(不复制、不改它),这里只做两件事:
+#   1. 加 web 服务(basereact 的 Dockerfile)
+#   2. 用 deploy/baserust.override.yml 把 nginx 换成带「/ → web」的配置
+# 端口、凭据等变量与 baserust 相同,可在本目录 .env 覆盖(见 .env.example)。
+
+name: baserust-stack
+
+include:
+  - path:
+      - baserust/docker-compose.yml
+      - deploy/baserust.override.yml
+    env_file: .env.compose
+
+services:
+  web:
+    build:
+      context: basereact
+    # distroless 镜像无 shell/curl,不配 healthcheck;nginx 只等它启动。
+    environment:
+      PORT: "3000"
+    restart: unless-stopped
