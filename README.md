@@ -52,6 +52,18 @@ baserust 改了 `nginx.conf` 之后，跑一下 `bash scripts/check-nginx-drift.
 
 停止：`docker compose down`（保留数据卷）；连数据一起清：`docker compose down -v`。
 
+### 只起基础容器，后端 / 前端本机跑
+
+```bash
+just infra                 # = docker compose up -d pg migrate minio minio-init nats dbhub
+cd baserust  && just dev   # 后端 :8137（读 baserust/.env，从 .env.example 复制）
+cd basereact && pnpm dev   # 前端 :7621（读 basereact/.env，/api 代理到 :8137）
+```
+
+`baserust/.env.example` 里的端口（pg 5821、minio 9862、nats 2224）和 compose 的默认端口一致，复制成 `.env` 就能连上。改了 `.env.compose` 里的端口，记得同步改 `baserust/.env`。
+
+`just` 的其他目标：`just up`（整栈）、`just ps`、`just down`。
+
 > 前端改完要看效果，日常更快的是本机 `pnpm dev`（见下文「本地联调」）；compose 适合整栈验收、给别人演示。
 
 ## 拉取
