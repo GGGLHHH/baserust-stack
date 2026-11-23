@@ -1,0 +1,20 @@
+[submodule "baserust"]
+	path = baserust
+	url = ../baserust.git
+	branch = master
+[submodule "rust-idm"]
+	path = rust-idm
+	url = ../rust-idm.git
+	branch = main
+[submodule "rust-content"]
+	path = rust-content
+	url = ../rust-content.git
+	branch = master
+[submodule "basereact"]
+	path = basereact
+	url = ../basereact.git
+	branch = master
+[submodule "cadenza"]
+	path = cadenza
+	url = ../cadenza.git
+	branch = master

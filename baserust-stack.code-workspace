@@ -1,0 +1,29 @@
+{
+  "folders": [
+    {
+      "name": "baserust-stack (总仓库)",
+      "path": "."
+    },
+    {
+      "name": "baserust (后端)",
+      "path": "baserust"
+    },
+    {
+      "name": "rust-idm (认证库)",
+      "path": "rust-idm"
+    },
+    {
+      "name": "rust-content (内容库)",
+      "path": "rust-content"
+    },
+    {
+      "name": "basereact (前端)",
+      "path": "basereact"
+    },
+    {
+      "name": "cadenza (组件库)",
+      "path": "cadenza"
+    }
+  ],
+  "settings": {}
+}

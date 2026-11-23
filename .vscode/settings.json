@@ -1,0 +1,9 @@
+{
+  "files.exclude": {
+    "baserust": true,
+    "rust-idm": true,
+    "rust-content": true,
+    "basereact": true,
+    "cadenza": true
+  }
+}
