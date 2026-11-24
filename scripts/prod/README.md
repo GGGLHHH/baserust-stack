@@ -72,6 +72,7 @@ docker compose -p <项目名> -f docker-compose.prod.yml -f compose.web.yml logs
 
 nginx 只服 HTTP。HTTPS 和域名由前面的 1Panel / LB 负责:把域名反代到 `http://127.0.0.1:<端口>`,
 网站配置里加 `client_max_body_size 50m;`(上传文件)。后端 cookie 带 `Secure`,**必须经 HTTPS 访问才能登录**。
+HSTS 也在 1Panel 那一层开(确认整站都走 HTTPS 之后);其余安全响应头(防嵌入、nosniff、CSP 等)nginx 已经加了。
 部署前想先验证:`ssh -L <本机端口>:127.0.0.1:<端口> <服务器>`,然后本机浏览器打开 `http://localhost:<本机端口>/health`。
 
 ## 数据迁移(旧服务器 → 新服务器)
