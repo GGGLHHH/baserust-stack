@@ -28,3 +28,12 @@ prod-init *args:
 # 打离线部署包(首次部署加 --all):产物在 prod/update/,传到服务器执行里面的 .run
 prod-build *args:
     bash scripts/prod/build.sh {{args}}
+
+# ── 新项目 / 同步底座(说明见 docs/new-project.md)──
+# 以本底座起新项目(在底座里运行):just new-project shop --owner my-org
+new-project *args:
+    bash scripts/new-project.sh {{args}}
+
+# 把底座的更新合并进本项目(在项目里运行)
+sync-base *args:
+    bash scripts/sync-base.sh {{args}}

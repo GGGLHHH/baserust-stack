@@ -56,6 +56,10 @@ baserust 改了 `nginx.conf` 之后，跑一下 `bash scripts/check-nginx-drift.
 
 单机 docker compose,一键离线部署:本机 `just prod-init --name <项目名> --port <端口>`(只做一次,生成随机密码和密钥)→ `just prod-build --all`(构建并导出镜像、生成部署包)→ 把 `prod/update/` 传到服务器,执行里面的 `.run`。升级只重复后两步;换服务器有数据迁移脚本。详见 [scripts/prod/README.md](scripts/prod/README.md)。
 
+### 用底座起新项目
+
+`just new-project <项目名>` 建项目自己的总仓库、后端、前端(带着底座的历史);之后底座有更新,在项目里 `just sync-base` 合并过去。怎么改才好同步、冲突怎么处理,见 [docs/new-project.md](docs/new-project.md)。
+
 ### 只起基础容器，后端 / 前端本机跑
 
 ```bash
