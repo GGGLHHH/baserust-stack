@@ -4,11 +4,17 @@
 # 并让 nginx 等它起来。nginx.conf 由部署包换成 deploy/nginx.conf(多了「/ → web」)。
 services:
   web:
-    image: basereact-web:latest
+    image: ${COMPOSE_PROJECT_NAME:-baserust}-web:latest
     pull_policy: never
     restart: unless-stopped
     environment:
       PORT: "3000"
+    # 日志轮转,同 docker-compose.prod.yml 的 x-logging(锚点不能跨文件引用)
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     # distroless 镜像没有 shell / curl,不配 healthcheck;nginx 只等它启动。
 
   nginx:

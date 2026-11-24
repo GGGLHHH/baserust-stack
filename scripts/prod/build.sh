@@ -21,9 +21,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 die() { echo "❌ $*" >&2; exit 1; }
 
 # 服务名 → 镜像名 → 来源。build:<上下文目录>:<Dockerfile 的 target>;pull = 第三方镜像。
-# 镜像名与 baserust/docker-compose.prod.yml、deploy/prod/compose.web.yml 里的 image: 一致。
+# 镜像名(IMAGES,读到项目名后才定)与 baserust/docker-compose.prod.yml、deploy/prod/compose.web.yml 里的 image: 一致。
 SERVICES=(app migrate web postgres nginx minio nats)
-IMAGES=(baserust-runtime:latest baserust-migrate:latest basereact-web:latest postgres:17-alpine nginx:alpine pgsty/minio:latest nats:alpine)
 SOURCES=(build:baserust:runtime build:baserust:migrate build:basereact:runner pull pull pull pull)
 
 index_of() {
@@ -63,6 +62,8 @@ for f in "$SECRETS/keys/prod-ed25519.pem" "$SECRETS/keys/prod-ed25519.pub.pem" "
 done
 NAME="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_PROD" | tail -n 1)"
 [ -n "$NAME" ] || die "$ENV_PROD 里没有 COMPOSE_PROJECT_NAME"
+# 自家镜像带项目名:同一台服务器上的多个项目各载各的,不会互相覆盖同名镜像。
+IMAGES=("$NAME-app:latest" "$NAME-migrate:latest" "$NAME-web:latest" postgres:17-alpine nginx:alpine pgsty/minio:latest nats:alpine)
 
 IMG_DIR="$OUT_DIR/images"
 UPD_DIR="$OUT_DIR/update"
