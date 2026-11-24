@@ -1,0 +1,16 @@
+# 生产叠加层:部署时和 baserust 的 docker-compose.prod.yml 一起用
+#   docker compose -f docker-compose.prod.yml -f compose.web.yml ...
+# 后端整栈原样复用 baserust 的生产 compose(不复制、不改它),这里只加前端 web,
+# 并让 nginx 等它起来。nginx.conf 由部署包换成 deploy/nginx.conf(多了「/ → web」)。
+services:
+  web:
+    image: basereact-web:latest
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+    # distroless 镜像没有 shell / curl,不配 healthcheck;nginx 只等它启动。
+
+  nginx:
+    depends_on:
+      web: { condition: service_started }

@@ -1,3 +1,8 @@
 # 本地日志 / 临时产物
 *.log
 .env
+
+# 生产部署(scripts/prod):明文密码 .env、JWT 私钥、超管密码、镜像包,绝不入库
+/.env.prod
+/prod-secrets/
+/prod/

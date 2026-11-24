@@ -19,3 +19,12 @@ ps:
 # 停掉(保留数据卷);连数据一起清用 just down -v
 down *flags:
     docker compose down {{flags}}
+
+# ── 生产部署(scripts/prod,说明见 scripts/prod/README.md)──
+# 一次性生成生产配置:just prod-init --name shop --port 8080
+prod-init *args:
+    bash scripts/prod/init.sh {{args}}
+
+# 打离线部署包(首次部署加 --all):产物在 prod/update/,传到服务器执行里面的 .run
+prod-build *args:
+    bash scripts/prod/build.sh {{args}}
