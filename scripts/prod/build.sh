@@ -17,7 +17,6 @@
 # 包里的 .env 来自本机 .env.prod(含全部生产密钥),只在本机和服务器之间传,别外传。
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-ROOT="$(pwd)"
 
 die() { echo "❌ $*" >&2; exit 1; }
 
@@ -125,14 +124,11 @@ done
 # ── git 依赖的本地源码 ─────────────────────────────────
 # baserust 依赖的 idm / content 在 Cargo.toml 里按 GitHub tag 引用;构建时改用本地子模块
 # (git archive 出当前提交的干净源码,不带 target/ 和未提交的改动),不用连 GitHub。
-# 先核对:子模块的提交号必须等于 baserust/Cargo.lock 里记的,否则构建出来的不是锁定的版本。
+# 先核对:子模块的提交号必须等于 baserust/Cargo.lock 里记的,否则构建出来的不是锁定的版本(CI 也跑这个检查)。
+bash scripts/check-git-deps.sh >/dev/null || die "子模块和 baserust/Cargo.lock 对不上(见上)"
 GIT_DEP_ARGS=()
 for dep in idm:rust-idm content:rust-content; do
   crate="${dep%%:*}"; sub="${dep#*:}"
-  locked="$(awk -v n="$crate" -v q='"' '$0 == "name = " q n q { f = 1; next } f && /^source = / { sub(/.*#/, ""); sub(q "$", ""); print; exit }' baserust/Cargo.lock)"
-  [ -n "$locked" ] || die "baserust/Cargo.lock 里找不到 $crate 的 git 来源"
-  head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)" || die "子模块 $sub 没检出(git submodule update --init)"
-  [ "$head" = "$locked" ] || die "子模块 $sub 在 ${head:0:8},baserust/Cargo.lock 锁的是 ${locked:0:8}:先对齐(git submodule update)"
   mkdir -p "$STAGE/src-$crate"
   git -C "$sub" archive --format=tar HEAD | tar -x -C "$STAGE/src-$crate"
   GIT_DEP_ARGS+=(--build-context "$crate-src=$STAGE/src-$crate")

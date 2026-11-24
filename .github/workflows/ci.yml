@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: scripts · configs · versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Shellcheck
+        run: |
+          shellcheck -S warning scripts/*.sh scripts/prod/*.sh baserust/scripts/initdb/*.sh
+      # deploy/nginx.conf 必须 = baserust/nginx.conf + 「location / → web」。
+      - name: nginx config drift
+        run: bash scripts/check-nginx-drift.sh
+      # 子模块指针必须等于 baserust/Cargo.lock 锁的 idm / content 提交(打包用子模块源码构建)。
+      - name: Submodules match Cargo.lock
+        run: bash scripts/check-git-deps.sh
+      - name: Dev compose config
+        run: docker compose config -q
+      # 生产:init.sh 生成一份临时配置,按部署包的目录结构摆好,校验 compose 能解析、变量齐全。
+      - name: Prod init + compose config
+        run: |
+          tmp="$(mktemp -d)"
+          ENV_PROD="$tmp/.env.prod" PROD_SECRETS="$tmp/secrets" bash scripts/prod/init.sh --name citest --port 18080
+          mkdir "$tmp/pkg"
+          cp baserust/docker-compose.prod.yml deploy/prod/compose.web.yml "$tmp/pkg/"
+          cp "$tmp/.env.prod" "$tmp/pkg/.env"
+          docker compose -p citest --project-directory "$tmp/pkg" \
+            -f "$tmp/pkg/docker-compose.prod.yml" -f "$tmp/pkg/compose.web.yml" config -q
