@@ -23,9 +23,9 @@ die() { echo "❌ $*" >&2; exit 1; }
 
 # 服务名 → 镜像名 → 来源。build:<上下文目录>:<Dockerfile 的 target>;pull = 第三方镜像。
 # 镜像名与 baserust/docker-compose.prod.yml、deploy/prod/compose.web.yml 里的 image: 一致。
-SERVICES=(app migrate web postgres nginx minio mc nats)
-IMAGES=(baserust-runtime:latest baserust-migrate:latest basereact-web:latest postgres:17-alpine nginx:alpine pgsty/minio:latest pgsty/mc:latest nats:alpine)
-SOURCES=(build:baserust:runtime build:baserust:migrate build:basereact:runner pull pull pull pull pull)
+SERVICES=(app migrate web postgres nginx minio nats)
+IMAGES=(baserust-runtime:latest baserust-migrate:latest basereact-web:latest postgres:17-alpine nginx:alpine pgsty/minio:latest nats:alpine)
+SOURCES=(build:baserust:runtime build:baserust:migrate build:basereact:runner pull pull pull pull)
 
 index_of() {
   local i

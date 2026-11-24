@@ -35,7 +35,7 @@
 | `./scripts/prod/build.sh app web` | 只构建 / 拉取指定的 | 指定的,不管有没有变化 |
 | `./scripts/prod/build.sh --all` | 全部 | 全部(新服务器首次部署用) |
 
-服务名:自家镜像 `app`(app + idm 共用)、`migrate`、`web`;第三方 `postgres` `nginx` `minio` `mc` `nats`。
+服务名:自家镜像 `app`(app + idm 共用)、`migrate`、`web`;第三方 `postgres` `nginx` `minio`(建桶的 minio-init 也用它,自带 mc)`nats`。
 
 - **默认走国内源**:基础镜像缺了从 DaoCloud / 1ms 镜像站拉下来再打上原名(gcr.io 的 distroless 走 DaoCloud),
   构建里的 apt / cargo / npm 分别走阿里云、rsproxy.cn、npmmirror。不想走:`BUILD_MIRROR=official ./scripts/prod/build.sh`。

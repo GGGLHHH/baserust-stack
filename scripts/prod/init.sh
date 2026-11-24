@@ -51,6 +51,7 @@ MINIO_KEY="minio$(rand 8)"
 MINIO_SECRET="$(rand 24)"
 
 # 模板里每个 CHANGE-ME 换成随机值;MinIO 的 root 账号和 app 用的 S3 凭据必须是同一对。
+mkdir -p "$(dirname "$ENV_OUT")"
 echo "▶ 生成 $ENV_OUT"
 {
   echo "# 由 scripts/prod/init.sh 于 $(date '+%Y-%m-%d %H:%M:%S') 生成。改配置就改这份,重新打包部署;不要在服务器上直接改。"
