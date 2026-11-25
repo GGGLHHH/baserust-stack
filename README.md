@@ -9,7 +9,7 @@ baserust 全家桶的总仓库：用 git submodule 把五个独立仓库挂在�
 | 目录 | 仓库 | 跟踪分支 | 角色 |
 |---|---|---|---|
 | `baserust/` | [baserust](https://github.com/GGGLHHH/baserust) | `master` | 后端脚手架（axum + sqlx + utoipa） |
-| `rust-idm/` | [rust-idm](https://github.com/GGGLHHH/rust-idm) | `main` | 认证 / IDM 领域库（零 HTTP） |
+| `rust-idm/` | [rust-idm](https://github.com/GGGLHHH/rust-idm) | `master` | 认证 / IDM 领域库（零 HTTP） |
 | `rust-content/` | [rust-content](https://github.com/GGGLHHH/rust-content) | `master` | 内容 / 对象存储领域库（零 HTTP） |
 | `basereact/` | [basereact](https://github.com/GGGLHHH/basereact) | `master` | 前端（TanStack Start + React） |
 | `cadenza/` | [cadenza](https://github.com/GGGLHHH/cadenza) | `master` | 组件库，发布为 npm `@gedatou/cadenza-*` |

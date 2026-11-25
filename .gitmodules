@@ -5,7 +5,7 @@
 [submodule "rust-idm"]
 	path = rust-idm
 	url = ../rust-idm.git
-	branch = main
+	branch = master
 [submodule "rust-content"]
 	path = rust-content
 	url = ../rust-content.git
