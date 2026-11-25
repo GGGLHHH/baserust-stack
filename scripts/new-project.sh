@@ -27,10 +27,10 @@ step() { echo; echo "▶ $*"; }
 NAME=""; OWNER=""; VISIBILITY=--private; REMOTE_BASE=""; DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --owner) OWNER="$2"; shift 2 ;;
+    --owner) OWNER="${2:?--owner 后面要跟账号或组织名}"; shift 2 ;;
     --public) VISIBILITY=--public; shift ;;
-    --remote-base) REMOTE_BASE="${2%/}"; shift 2 ;;
-    --dir) DIR="$2"; shift 2 ;;
+    --remote-base) REMOTE_BASE="${2:?--remote-base 后面要跟地址前缀}"; REMOTE_BASE="${REMOTE_BASE%/}"; shift 2 ;;
+    --dir) DIR="${2:?--dir 后面要跟目录}"; shift 2 ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     -*) die "不认识的参数 $1(用 --help 看用法)" ;;
     *) [ -z "$NAME" ] || die "只能给一个项目名"; NAME="$1"; shift ;;
@@ -40,6 +40,7 @@ done
 [[ "$NAME" =~ ^[a-z][a-z0-9-]*$ ]] || die "项目名只能用小写字母、数字、短横线,字母开头:$NAME"
 [ -f project.env ] && die "这里已经是一个项目(有 project.env),请在底座 baserust-stack 里运行"
 git diff --quiet && git diff --cached --quiet || die "底座有没提交的改动:先提交或收起,新项目要从干净的提交起"
+git symbolic-ref -q HEAD >/dev/null || die "底座不在分支上(detached HEAD):先切到主分支"
 
 DIR="${DIR:-../$NAME-stack}"
 [ -e "$DIR" ] && die "$DIR 已存在"
@@ -55,6 +56,23 @@ sub_url() {   # .gitmodules 里的相对地址 ../x.git → 底座所在位置�
 sub_branch() { git -C "$BASE_ROOT" config -f .gitmodules "submodule.$1.branch"; }
 BASE_BACKEND_URL="$(sub_url baserust)";  BASE_BACKEND_BRANCH="$(sub_branch baserust)"
 BASE_FRONTEND_URL="$(sub_url basereact)"; BASE_FRONTEND_BRANCH="$(sub_branch basereact)"
+# 库子模块(除后端 / 前端以外的):每行「名字 路径」
+libs() {
+  git -C "$BASE_ROOT" config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read -r key path; do
+    key="${key#submodule.}"
+    case "$path" in baserust|basereact) ;; *) echo "${key%.path} $path" ;; esac
+  done
+}
+
+# 新项目要从底座已推送的提交起:项目以后从底座仓库取这些提交(库子模块、同步时的合并基础)
+step "检查底座的提交都已推送"
+check_pushed() {   # $1=目录
+  git -C "$1" fetch -q origin
+  [ -n "$(git -C "$1" branch -r --contains HEAD)" ] || die "$1 的当前提交还没推送到 origin:先推送底座"
+}
+check_pushed .
+for sub in baserust basereact $(libs | awk '{ print $2 }'); do check_pushed "$sub"; done
+echo "  ✓ 都已推送"
 
 # 新仓库地址
 if [ -n "$REMOTE_BASE" ]; then
@@ -71,16 +89,33 @@ echo "  底座:$BASE_STACK_URL($BASE_STACK_BRANCH)"
 echo "  新仓库:$(url_of "$STACK_REPO")、$(url_of "$BACKEND_REPO")、$(url_of "$FRONTEND_REPO")"
 echo "  本地目录:$DIR"
 
+STAGE="$(mktemp -d)"
+CREATED=()
+# 中途失败:列出已经建了的东西,重跑前要先清掉
+on_exit() {
+  local rc=$?
+  rm -rf "$STAGE"
+  [ "$rc" -eq 0 ] && return
+  echo >&2
+  echo "❌ 没做完。重跑前先清掉已经建的:" >&2
+  for repo in ${CREATED[@]+"${CREATED[@]}"}; do echo "     gh repo delete $OWNER/$repo --yes" >&2; done
+  [ -d "$DIR" ] && echo "     rm -rf $DIR" >&2
+  [ -n "$REMOTE_BASE" ] && echo "     (--remote-base 的仓库里推过的分支也要删)" >&2
+  return 0
+}
+trap on_exit EXIT
+
 if [ -z "$REMOTE_BASE" ]; then
   step "在 GitHub 建仓库($OWNER,${VISIBILITY#--})"
   for repo in "$STACK_REPO" "$BACKEND_REPO" "$FRONTEND_REPO"; do
+    gh repo view "$OWNER/$repo" >/dev/null 2>&1 && die "$OWNER/$repo 已存在"
+  done
+  for repo in "$STACK_REPO" "$BACKEND_REPO" "$FRONTEND_REPO"; do
     gh repo create "$OWNER/$repo" "$VISIBILITY" >/dev/null
+    CREATED+=("$repo")
     echo "  ✓ $OWNER/$repo"
   done
 fi
-
-STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
 
 # 后端 / 前端:底座本地子模块的当前提交(= 底座总仓库钉住的版本)连同历史推到新仓库
 step "推后端、前端的底座历史"
@@ -103,9 +138,9 @@ git remote add origin "$(url_of "$STACK_REPO")"
 # 子模块:后端 / 前端指向项目仓库(相对地址,跟着总仓库走 https / ssh);库仍用底座的(绝对地址)
 git config -f .gitmodules submodule.baserust.url "../$BACKEND_REPO.git"
 git config -f .gitmodules submodule.basereact.url "../$FRONTEND_REPO.git"
-for lib in rust-idm rust-content cadenza; do
-  git config -f .gitmodules "submodule.$lib.url" "$(sub_url "$lib")"
-done
+while read -r name _; do
+  git config -f .gitmodules "submodule.$name.url" "$(sub_url "$name")"
+done < <(libs)
 # 本机开发 compose 的项目名:和底座、别的项目同时跑也不撞容器和数据卷
 sed -i.bak "s/^name: baserust-stack$/name: $NAME-stack/" compose.yaml && rm -f compose.yaml.bak
 cat > project.env <<EOF

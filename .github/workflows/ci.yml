@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          # 默认的 GITHUB_TOKEN 只能读本仓库。子模块是私有仓库时(new-project.sh 默认建私有的),
+          # 在仓库 Settings → Secrets 里加 SUBMODULES_TOKEN(能读这几个仓库的 fine-grained token)。
+          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
       - name: Shellcheck
         run: |
           shellcheck -S warning scripts/*.sh scripts/prod/*.sh baserust/scripts/initdb/*.sh

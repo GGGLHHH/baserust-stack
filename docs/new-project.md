@@ -22,7 +22,7 @@ baserust-stack ──── 起项目时复制历史 ────▶ shop-stack 
 
 ## 起项目
 
-在底座(本仓库,干净的工作区、子模块已对齐)里:
+在底座(本仓库,干净的工作区、子模块已对齐、提交都已推送)里:
 
 ```bash
 gh auth status                                  # 需要 GitHub CLI 已登录
@@ -32,12 +32,14 @@ gh auth status                                  # 需要 GitHub CLI 已登录
 脚本会:
 1. 建 `shop-stack`、`shop-backend`、`shop-frontend` 三个仓库,把底座当前版本连同历史推上去;
 2. 在 `../shop-stack` 检出总仓库:子模块 `baserust/`、`basereact/` 指向项目仓库,库仍指向底座;
-   本机开发 compose 的项目名改成 `shop-stack`(和底座同时跑不撞容器);
+   本机开发 compose 的项目名改成 `shop-stack`(和底座同时跑,容器、数据卷、镜像都不撞);
 3. 写 `project.env`(底座各仓库的地址和分支,同步时用),提交并推送。
 
 然后:
 - **改品牌**:`basereact/src/brand.tsx`(侧边栏名称 / 图标)、`basereact/src/i18n/locales/*/common.json` 的 `appTitle`、
   `basereact/public/` 下的图标。
+- **CI**:总仓库的 CI 要检出子模块。项目仓库是私有的,默认的 `GITHUB_TOKEN` 读不到另外两个仓库:
+  在 `shop-stack` 的 Settings → Secrets 里加 `SUBMODULES_TOKEN`(能读 `shop-backend`、`shop-frontend` 的 fine-grained token)。
 - **部署**:`just prod-init --name shop --port 8081` → `just prod-build --all`(见 [scripts/prod/README.md](../scripts/prod/README.md))。
   同一台服务器上多个项目:项目名、端口不同即可,compose 项目名、目录、容器名、镜像名都按项目名区分。
 
@@ -52,7 +54,8 @@ gh auth status                                  # 需要 GitHub CLI 已登录
 
 1. 取底座总仓库的最新提交,按它钉住的后端 / 前端版本合并(底座每个提交 = 一组能一起跑的版本,不追各仓库的最新提交);
 2. 后端、前端、总仓库各开一个 `sync/base-<日期>` 分支合并;
-3. 总仓库的子模块指针:后端 / 前端用刚合并出来的提交,库跟底座走,`.gitmodules` 保留项目自己的;
+3. 总仓库的子模块指针:后端 / 前端用刚合并出来的提交,库跟底座走;`.gitmodules` 取底座的(底座新加的库也带过来),
+   后端 / 前端的地址保留项目自己的;
 4. 检查子模块和 `Cargo.lock` 一致、nginx 配置没漂移,再跑后端 lint / test、前端 lint / tsc / test;
 5. **不推送**:看过以后按脚本最后打印的命令推(先后端、前端,最后总仓库),再照常打包部署。
 
@@ -88,5 +91,5 @@ gh auth status                                  # 需要 GitHub CLI 已登录
 
 ## 本机开发
 
-项目和底座、别的项目在同一台机器上同时跑时,compose 项目名已经各不相同;端口改 `.env.compose`
+项目和底座、别的项目在同一台机器上同时跑时,compose 项目名已经各不相同(容器、数据卷、镜像都按它区分);端口改 `.env.compose`
 (总仓库)和 `baserust/.env`、`basereact/.env`。
