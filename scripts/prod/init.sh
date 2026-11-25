@@ -52,6 +52,7 @@ MINIO_SECRET="$(rand 24)"
 
 # 模板里每个 CHANGE-ME 换成随机值;MinIO 的 root 账号和 app 用的 S3 凭据必须是同一对。
 mkdir -p "$(dirname "$ENV_OUT")"
+trap 'rm -f "$ENV_OUT.tmp"' EXIT   # 中途失败不留带密码的临时文件
 echo "▶ 生成 $ENV_OUT"
 {
   echo "# 由 scripts/prod/init.sh 于 $(date '+%Y-%m-%d %H:%M:%S') 生成。改配置就改这份,重新打包部署;不要在服务器上直接改。"
@@ -72,7 +73,9 @@ echo "▶ 生成 $ENV_OUT"
     esac
   done < "$TEMPLATE"
 } > "$ENV_OUT.tmp"
-grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*CHANGE-ME' "$ENV_OUT.tmp" && die "生成后仍有 CHANGE-ME,模板格式变了?($ENV_OUT.tmp)"
+if left="$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=.*CHANGE-ME' "$ENV_OUT.tmp" | cut -d= -f1)"; then
+  die "生成后仍有 CHANGE-ME,模板格式变了?($(echo $left))"
+fi
 mv -f "$ENV_OUT.tmp" "$ENV_OUT"
 chmod 600 "$ENV_OUT"
 

@@ -24,8 +24,9 @@ if [ -z "$DIR" ]; then
 fi
 cd "$DIR" || die "进不去 $DIR"
 [ -f .env ] && [ -f compose.web.yml ] || die "$DIR 不像项目目录(缺 .env / compose.web.yml)"
-env_of() { sed -n "s/^$1=//p" .env | tail -n 1; }
+env_of() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r' | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
 NAME="$(env_of COMPOSE_PROJECT_NAME)"
+[ -n "$NAME" ] || die "$DIR/.env 里没有 COMPOSE_PROJECT_NAME"
 PGU="$(env_of POSTGRES_USER)"; PGD="$(env_of POSTGRES_DB)"
 COMPOSE=(docker compose -p "$NAME" -f docker-compose.prod.yml -f compose.web.yml)
 OUT_DIR="/opt/$NAME-migrate"

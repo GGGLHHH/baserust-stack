@@ -60,7 +60,7 @@ grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*CHANGE-ME' "$ENV_PROD" && die "$ENV_PROD 里
 for f in "$SECRETS/keys/prod-ed25519.pem" "$SECRETS/keys/prod-ed25519.pub.pem" "$SECRETS/seed.prod.toml"; do
   [ -f "$f" ] || die "缺 $f:先执行 ./scripts/prod/init.sh"
 done
-NAME="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_PROD" | tail -n 1)"
+NAME="$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$ENV_PROD" | tail -n 1 | tr -d '\r' | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
 [ -n "$NAME" ] || die "$ENV_PROD 里没有 COMPOSE_PROJECT_NAME"
 # 自家镜像带项目名:同一台服务器上的多个项目各载各的,不会互相覆盖同名镜像。
 IMAGES=("$NAME-app:latest" "$NAME-migrate:latest" "$NAME-web:latest" postgres:17-alpine nginx:alpine pgsty/minio:latest nats:alpine)
@@ -148,12 +148,19 @@ for svc in "${TARGETS[@]}"; do
   echo "▶ 构建 $svc → $img($ctx,target $target;Rust 首次编译要十几分钟)"
   extra=()
   [ "$ctx" = baserust ] && extra=("${GIT_DEP_ARGS[@]}")
+  # 前端错误上报带的版本号 = 前端仓库的提交号(有未提交的改动加 -dirty)
+  if [ "$ctx" = basereact ]; then
+    release="$(git -C basereact rev-parse --short HEAD)"
+    [ -z "$(git -C basereact status --porcelain)" ] || release="$release-dirty"
+    extra=(--build-arg "APP_RELEASE=$release")
+  fi
   DOCKER_BUILDKIT=1 docker build --platform linux/amd64 ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
     ${extra[@]+"${extra[@]}"} --target "$target" -t "$img" "$ctx"
 done
 
 # ── 导出 ───────────────────────────────────────────────
 EXPORTED=()
+EXPORTED_IDS=()   # 导出成功的镜像 ID:整个包做完(update/ 装好)才记下,中途失败下次会重新导出
 for svc in "${TARGETS[@]}"; do
   img="${IMAGES[$(index_of "$svc")]}"
   arch="$(docker image inspect -f '{{.Architecture}}' "$img")" || die "没找到镜像 $img"
@@ -170,8 +177,9 @@ for svc in "${TARGETS[@]}"; do
   # gzip:docker load 原生能解,服务器不依赖额外工具。先写临时文件再改名:中途失败不留半截文件。
   docker save "$img" | gzip -1 > "$base.tar.gz.tmp"
   mv -f "$base.tar.gz.tmp" "$base.tar.gz"
-  echo "$id" > "$base.id"
+  rm -f "$base.id"
   EXPORTED+=("$base.tar.gz")
+  EXPORTED_IDS+=("$id")
 done
 
 # ── 部署包(只有配置、密钥和脚本)──────────────────────
@@ -193,10 +201,13 @@ chmod +x "$PKG/deploy.sh"
 {
   echo "package: $PKG_NAME"
   echo "built: $(date '+%Y-%m-%d %H:%M:%S %z')"
-  echo "stack: $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- . ':!prod' 2>/dev/null || echo ' (有未提交改动)')"
+  # 未跟踪的文件也算:docker 构建上下文里有它们
+  dirty=
+  [ -z "$(git status --porcelain --ignore-submodules=dirty -- . ':!prod')" ] || dirty=' (有未提交改动)'
+  echo "stack: $(git rev-parse --short HEAD)$dirty"
   git submodule status | while read -r sha path rest; do
     dirty=
-    git -C "$path" diff --quiet HEAD 2>/dev/null || dirty=' (有未提交改动)'
+    [ -z "$(git -C "$path" status --porcelain 2>/dev/null)" ] || dirty=' (有未提交改动)'
     echo "$path: ${sha#[-+U ]}$dirty"
   done
 } > "$PKG/VERSION"
@@ -234,8 +245,10 @@ cp scripts/prod/migrate-export.sh scripts/prod/migrate-import.sh "$OUT_DIR/"
 rm -rf "$UPD_DIR"
 mkdir -p "$UPD_DIR/images"
 cp -p "$OUT" "$UPD_DIR/"
-for f in ${EXPORTED[@]+"${EXPORTED[@]}"}; do
+for i in ${EXPORTED[@]+"${!EXPORTED[@]}"}; do
+  f="${EXPORTED[$i]}"
   ln "$f" "$UPD_DIR/images/" 2>/dev/null || cp -p "$f" "$UPD_DIR/images/"
+  echo "${EXPORTED_IDS[$i]}" > "${f%.tar.gz}.id"
 done
 
 echo

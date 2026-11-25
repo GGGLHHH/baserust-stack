@@ -9,7 +9,7 @@
 |---|---|---|---|
 | 1 | 本机,只做一次 | `./scripts/prod/init.sh --name <项目名> --port <端口>` | 生成 `.env.prod`(全部随机密码)、JWT 密钥对、首个超管账号(密码只打印这一次) |
 | 2 | 本机,每次发版 | `./scripts/prod/build.sh`(首次部署用 `--all`) | 构建镜像、导出有变化的镜像、生成部署包,要上传的东西都在 `prod/update/` |
-| 3 | 服务器 | 把 `prod/update/` 整个传到一个**新的空目录**,进去执行 `bash <项目名>-deploy_<时间>.run` | 载入镜像 → 装配置到 `/opt/<项目名>/prod` → 补齐数据库 role → 启动并等全部健康检查通过 |
+| 3 | 服务器 | 把 `prod/update/` 整个传到一个**新的空目录**,进去用 root 执行 `bash <项目名>-deploy_<时间>.run` | 载入镜像 → 装配置到 `/opt/<项目名>/prod` → 补齐数据库 role → 启动并等全部健康检查通过 |
 
 `just prod-init ...` / `just prod-build ...` 是同样的命令。首次部署和升级都是第 3 步这一条。
 
@@ -48,7 +48,7 @@
 
 ## 部署做了什么(deploy.sh,由 .run 自动调用)
 
-1. 检查:docker、compose ≥ 2.20、包是否完整、`.env` 里有没有没改的 `CHANGE-ME`。
+1. 检查:root 用户(私钥要改属主给容器用户)、docker、compose ≥ 2.20、包是否完整、`.env` 里有没有没改的 `CHANGE-ME`。
 2. 载入 `images/` 里有的镜像(没有的沿用服务器上已有的;服务器上也没有就会在启动时报错停下)。
 3. 把 compose、`.env`、nginx 配置、密钥、超管账号文件、建库脚本装到 `DEPLOY_DIR`(默认 `/opt/<项目名>/prod`)。
    私钥和超管账号文件只给容器用户(uid 10001)读。
@@ -73,6 +73,8 @@ docker compose -p <项目名> -f docker-compose.prod.yml -f compose.web.yml logs
 nginx 只服 HTTP。HTTPS 和域名由前面的 1Panel / LB 负责:把域名反代到 `http://127.0.0.1:<端口>`,
 网站配置里加 `client_max_body_size 50m;`(上传文件)。后端 cookie 带 `Secure`,**必须经 HTTPS 访问才能登录**。
 HSTS 也在 1Panel 那一层开(确认整站都走 HTTPS 之后);其余安全响应头(防嵌入、nosniff、CSP 等)nginx 已经加了。
+`.env.prod` 默认 `TRUSTED_PROXY_HOPS=2`(1Panel / LB → nginx → app 两层,取到的才是真实客户端 IP):
+nginx 的端口要用防火墙 / 安全组挡住公网、只让外层代理访问;nginx 直接对公网时改成 1。
 部署前想先验证:`ssh -L <本机端口>:127.0.0.1:<端口> <服务器>`,然后本机浏览器打开 `http://localhost:<本机端口>/health`。
 
 ## 数据迁移(旧服务器 → 新服务器)

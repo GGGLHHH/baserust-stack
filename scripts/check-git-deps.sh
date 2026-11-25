@@ -7,9 +7,9 @@ cd "$(dirname "$0")/.."
 
 for dep in idm:rust-idm content:rust-content; do
   crate="${dep%%:*}"; sub="${dep#*:}"
-  locked="$(awk -v n="$crate" -v q='"' '$0 == "name = " q n q { f = 1; next } f && /^source = / { sub(/.*#/, ""); sub(q "$", ""); print; exit }' baserust/Cargo.lock)"
+  locked="$(awk -v n="$crate" -v q='"' '$0 == "name = " q n q { f = 1; next } f && /^\[\[package\]\]/ { exit } f && /^source = "git\+/ { sub(/.*#/, ""); sub(q "$", ""); print; exit }' baserust/Cargo.lock)"
   if [ -z "$locked" ]; then
-    echo "❌ baserust/Cargo.lock 里找不到 $crate 的 git 来源" >&2; exit 1
+    echo "❌ baserust/Cargo.lock 里 $crate 不是 git 依赖(改成 path 依赖了?打包要按 git tag 引用)" >&2; exit 1
   fi
   if ! head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)"; then
     echo "❌ 子模块 $sub 没检出(git submodule update --init)" >&2; exit 1

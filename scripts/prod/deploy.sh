@@ -14,10 +14,12 @@ IMAGES_DIR="${DEPLOY_IMAGES_DIR:-$PKG_DIR/images}"
 
 die() { echo "❌ $*" >&2; exit 1; }
 step() { echo; echo "▶ $*"; }
-env_of() { sed -n "s/^$1=//p" .env | tail -n 1; }
+# 取 .env 里的值:去掉回车(Windows 上手改过)和成对的引号,和 compose 读到的一致
+env_of() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r' | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"; }
 
 # ── 检查 ───────────────────────────────────────────────
-docker info >/dev/null 2>&1 || die "用不了 docker(用 root 执行,或把当前用户加进 docker 组)"
+[ "$(id -u)" -eq 0 ] || die "要用 root 执行(sudo bash <包名>.run):私钥和超管账号文件要改属主给容器用户 10001"
+docker info >/dev/null 2>&1 || die "用不了 docker:docker 服务在跑吗?"
 compose_ver="$(docker compose version --short 2>/dev/null)" || die "需要 docker compose v2(docker compose 插件)"
 IFS=. read -r cv_major cv_minor _ <<< "${compose_ver#v}"
 if [ "${cv_major:-0}" -lt 2 ] || { [ "${cv_major:-0}" -eq 2 ] && [ "${cv_minor:-0}" -lt 20 ]; }; then
@@ -67,7 +69,7 @@ cd "$DEPLOY_DIR"
 mkdir -p data/postgres data/minio data/nats
 chmod 600 .env
 # app / idm 容器以 uid 10001 运行:私钥和超管账号文件只给它读,公钥谁都能读。
-chown 10001:10001 keys/prod-ed25519.pem seed.prod.toml 2>/dev/null || true
+chown 10001:10001 keys/prod-ed25519.pem seed.prod.toml
 chmod 600 keys/prod-ed25519.pem seed.prod.toml
 chmod 644 keys/prod-ed25519.pub.pem
 chmod -R a+rX scripts/initdb   # pg 容器的 initdb 要读
