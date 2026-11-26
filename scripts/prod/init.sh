@@ -7,6 +7,8 @@
 #   ./scripts/prod/init.sh                         项目名 baserust,nginx 监听 80
 #   ./scripts/prod/init.sh --name shop --port 8080 --domain admin.example.com
 #   ./scripts/prod/init.sh --force                 覆盖已有的(⚠️ 换了密码 / 密钥,已部署的服务器要重新部署)
+#   ./scripts/prod/init.sh --add-missing           升级用:把模板里新加、.env.prod 还没有的配置项补进去
+#                                                  (CHANGE-ME 换成随机密码),已有的值一个都不动
 #
 #   --name    项目名:compose 项目名、服务器目录 /opt/<名字>/prod、部署包文件名都用它。
 #             同一台服务器部署多个项目时,项目名和端口都要不同。
@@ -21,12 +23,14 @@ NAME=baserust
 PORT=80
 DOMAIN=
 FORCE=
+ADD_MISSING=
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) NAME="${2:?--name 后面要跟项目名}"; shift 2 ;;
     --port) PORT="${2:?--port 后面要跟端口}"; shift 2 ;;
     --domain) DOMAIN="${2:?--domain 后面要跟域名}"; shift 2 ;;
     --force) FORCE=1; shift ;;
+    --add-missing) ADD_MISSING=1; shift ;;
     -h|--help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) die "不认识的参数 $1(用 --help 看用法)" ;;
   esac
@@ -40,13 +44,52 @@ TEMPLATE=baserust/.env.prod
 SEED_TEMPLATE=baserust/seed.prod.toml.example
 [ -f "$TEMPLATE" ] || die "缺 $TEMPLATE(先 git submodule update --init)"
 command -v openssl >/dev/null || die "需要 openssl"
+
+rand() { openssl rand -hex "${1:-24}"; }
+
+# ── 升级:只补缺的配置项 ───────────────────────────────
+# 底座加了新配置(如多租户拆出的 owner / system 数据库账号),老的 .env.prod 里没有;--force 会把全部
+# 密码和密钥换掉,所以单独补:模板里有、.env.prod 里没有的键追加到末尾,CHANGE-ME 换成随机值。
+if [ -n "$ADD_MISSING" ]; then
+  [ -z "$FORCE" ] || die "--add-missing 和 --force 不能一起用"
+  [ -f "$ENV_OUT" ] || die "$ENV_OUT 不存在:首次生成不要加 --add-missing"
+  added=()
+  lines=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    grep -q "^$key=" "$ENV_OUT" && continue
+    case "$key" in
+      # 这两对必须是同一对值(MinIO root 账号 = app 用的 S3 凭据),缺了不能各自随机。
+      MINIO_USER|MINIO_PASSWORD|S3_ACCESS_KEY|S3_SECRET_KEY) die "$ENV_OUT 缺 $key:MinIO 凭据要成对,手工补上" ;;
+    esac
+    case "$line" in
+      *=CHANGE-ME*) lines+=("$key=$(rand 24)") ;;
+      *) lines+=("$line") ;;
+    esac
+    added+=("$key")
+  done < "$TEMPLATE"
+  if [ "${#added[@]}" -eq 0 ]; then
+    echo "✅ $ENV_OUT 不缺配置项,没有改动"
+    exit 0
+  fi
+  {
+    echo
+    echo "# ── 由 scripts/prod/init.sh --add-missing 于 $(date '+%Y-%m-%d %H:%M:%S') 补上 ──"
+    printf '%s\n' "${lines[@]}"
+  } >> "$ENV_OUT"
+  chmod 600 "$ENV_OUT"
+  echo "✅ 补上了 ${#added[@]} 项:${added[*]}"
+  echo "  下一步:重新打包部署(./scripts/prod/build.sh),deploy.sh 会在迁移前建好新账号"
+  exit 0
+fi
 if [ -z "$FORCE" ]; then
   for f in "$ENV_OUT" "$SECRETS/keys/prod-ed25519.pem" "$SECRETS/seed.prod.toml"; do
     [ -e "$f" ] && die "$f 已存在。要重新生成就加 --force(⚠️ 会换掉全部密码和密钥)"
   done
 fi
 
-rand() { openssl rand -hex "${1:-24}"; }
 MINIO_KEY="minio$(rand 8)"
 MINIO_SECRET="$(rand 24)"
 

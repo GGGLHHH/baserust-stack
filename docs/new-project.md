@@ -89,6 +89,63 @@ gh auth status                                  # 需要 GitHub CLI 已登录
    一定要删也行,那时冲突选删除(`git rm`)即可。
 6. **文案**:项目自己的文案用新的 key,别改底座已有 key 的位置;`common.json` 冲突了按 key 合并就行。
 
+## 同步多租户版本后要做的事
+
+底座从「单租户」升到「单机多租户」(组织 = 租户;rust-idm 0.6.0 / rust-content 0.4.0)。合并本身照上面的流程,
+合完以后项目**自己的代码和数据**还要跟着改,否则 `just test-pg` 会拦下来,或上线后数据串到别的组织。
+设计依据:`docs/superpowers/specs/2026-11-25-multi-tenant-design.md`。
+
+### 1. 项目自己的表:要么租户隔离,要么登记成全局表
+
+`baserust/tests/rls_audit.rs`(`just test-pg` 里跑)会把每张表过一遍:既没开租户 RLS、又不在 `GLOBAL_TABLES` 里的 → 失败。
+这是有意的提醒,二选一:
+
+- **业务数据(默认)→ 租户隔离**:新迁移(编号 1000 起)照 `migrations/app/0006_widget_tenancy.up.sql` 写:
+  加 `tenant_id uuid` → **先回填**成默认组织 `00000000-0000-0000-0000-000000000001`(子表从父行回填)→ `not null` +
+  `check (tenant_id <> '00000000-0000-0000-0000-000000000000')` → 唯一 / 列表索引以 `tenant_id` 打头 →
+  `enable` + `force row level security` + `tenant_isolation` 策略(USING 与 WITH CHECK 都写
+  `tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid`)。**回填必须在开 RLS 之前**。
+  代码照 widget 改:repo 方法收 `TenantId`,PG 实现用 `infra::pg::tenant_tx(&pool, tenant)` 开事务、SQL 里再写
+  `tenant_id = $1`;内存实现按租户过滤;handler 用 `CurrentTenant` 提取器取租户(只从 token 来);
+  事件带 `tenant_id`、SSE 逐帧过滤;`tests/http_<模块>.rs` 加跨租户黑盒测试(别的组织的 id → 404、列表只见本组织)。
+  细节见 `baserust/.claude/skills/adding-a-feature`。
+- **确实全局的(字典、配置、按账号而不是按组织的数据)→ 登记**:把 `schema.table` 加进 `rls_audit.rs` 的 `GLOBAL_TABLES`,
+  并在注释里写清为什么全局。
+
+### 2. 项目自己的角色和权限:要有作用域
+
+- `RoleName` 新加的角色要在 `RoleName::scope()` 里归类:平台角色(管全站,如 superadmin)或租户角色(在某个组织里生效)。
+- `Perm` 新加的权限同样要在 `Perm::scope()` 里归类(穷尽 match,漏了编译不过);`perm_scopes_cover_all_variants` 测试兜底。
+  平台角色**不会**自动拿到租户级权限。
+- `seed.toml` 里账号的租户角色写在 `tenants = [{ slug = "default", roles = [...] }]`,平台角色写 `roles`。
+- 后台组里读写组织数据的接口,闸要用**租户级**权限,别用平台级 `users:admin`,否则组织管理员看不到菜单(见 `authorization` skill)。
+
+### 3. 数据库账号和升级顺序
+
+app / content / search 各拆成三个账号:`<schema>_owner`(跑迁移、拥有表)、`<schema>`(运行时,只有 DML,受 RLS 约束)、
+`<schema>_system`(BYPASSRLS,后台任务 / 平台级读)。
+
+- **本机开发库**(老数据卷):先 `just db-ensure-roles`(跑 `10-tenancy-roles.sh`:建账号、把老表转给 owner、授权),
+  **再** `just migrate`。顺序反了迁移会失败。`.env` 照 `.env.example` 补上 `*_DB_OWNER_*` / `*_DB_SYSTEM_*`。
+- **生产**:本机 `./scripts/prod/init.sh --add-missing` 补新密码 → 重新打包部署;deploy.sh 会在迁移前拆账号、迁移后回填
+  search(`rebuild_search`)。详见 [scripts/prod/README.md](../scripts/prod/README.md)「从多租户之前的版本升级」。
+- **授权**:运行时 / system 账号的 DML 是靠 owner 上的 `ALTER DEFAULT PRIVILEGES` 自动拿到的 —— 项目迁移(以 owner 身份)
+  建的新表不用自己 `grant`。反过来,要收紧的表自己收:比如只许 system 账号写的全局读模型,在迁移里
+  `revoke insert, update, delete on <表> from <运行时账号>`(底座的 `search.account_index`、`search.auth_event` 在 `10-tenancy-roles.sh` 第 6 步收)。
+  项目要是在迁移以外手工建过表 / 改过属主,再跑一次 `just db-ensure-roles` 会把它们转给 owner。
+- 旧数据全部归进默认组织(`default`):账号成为它的成员、原有角色复制成成员角色、超管兼任它的管理员。
+
+### 4. 前端
+
+- `basereact/src/brand.tsx` 的导出从 `BRAND_TEAMS`(数组)改成了 `BRAND`(`{ name, logo, tagline }` 单个对象):
+  这个文件项目一般改过,合并会冲突 —— 取底座的新结构,再把项目的名称 / 图标填回去。
+  账号属于 ≥ 2 个组织时侧栏左上角变成组织切换器(名称显示当前组织,副标题是品牌名)。
+- 后台「用户」页改名「账号管理」(平台账号,URL 仍是 `/admin/users`);新加「成员」(本组织成员)和「组织管理」(平台)两页。
+- 项目自己的页面:接口返回 403 `tenant_required`(当前没有组织,且账号没有平台角色)时,前端会把人带到所在端的
+  「没有当前组织」页(`/admin/no-tenant` / `/frontend/no-tenant`):账号属于组织就列出来选一个进入(只属于 1 个也能选),
+  一个都没有才显示「还没加入任何组织」。项目页面里不要自己拼 `tenant_id` 参数,
+  租户只从登录态来。改过后端接口就重新 `pnpm generate`。
+
 ## 本机开发
 
 项目和底座、别的项目在同一台机器上同时跑时,compose 项目名已经各不相同(容器、数据卷、镜像都按它区分);端口改 `.env.compose`

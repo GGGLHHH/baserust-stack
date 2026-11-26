@@ -2,7 +2,8 @@
 # 一键部署。由 build.sh 打出的 <项目名>-deploy_<时间>.run 解包后自动调用,不用手动执行。
 #
 # 检查 → 载入镜像(部署包旁边 images/ 下有的才载入,没有的沿用本机已有的)→ 把配置装到 DEPLOY_DIR
-# → 起数据库并补齐各 schema 的 role → up -d 并等全部健康检查通过。首次部署和升级都是这一条。
+# → 起数据库并补齐各 schema 的 role、拆分多租户账号 → up -d 并等全部健康检查通过
+# → search 读模型为空时回填(rebuild_search,多租户升级后第一次部署)。首次部署和升级都是这一条。
 # 数据(DEPLOY_DIR/data 下的 postgres / minio / nats)不会被动。
 # compose 项目名取 .env 的 COMPOSE_PROJECT_NAME:同一台服务器上多个项目各用各的名字、端口和目录。
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -29,6 +30,11 @@ for f in docker-compose.prod.yml compose.web.yml nginx.conf .env keys/prod-ed255
   [ -e "$f" ] || die "包不完整:缺 $f"
 done
 grep -Eq '^[A-Za-z_][A-Za-z0-9_]*=.*CHANGE-ME' .env && die ".env 里还有 CHANGE-ME 没改(重新执行 init.sh 生成)"
+# 多租户新加的数据库账号(owner 跑迁移 / system 跑后台任务)。老的 .env.prod 没有这几行。
+for k in APP_DB_OWNER_PASSWORD APP_DB_SYSTEM_PASSWORD CONTENT_DB_OWNER_PASSWORD CONTENT_DB_SYSTEM_PASSWORD \
+         SEARCH_DB_OWNER_PASSWORD SEARCH_DB_SYSTEM_PASSWORD; do
+  [ -n "$(env_of "$k")" ] || die ".env 缺 $k:本机执行 ./scripts/prod/init.sh --add-missing 补上(不动已有密码),重新打包部署"
+done
 
 NAME="$(env_of COMPOSE_PROJECT_NAME)"
 [ -n "$NAME" ] || die ".env 里没有 COMPOSE_PROJECT_NAME"
@@ -73,6 +79,8 @@ chown 10001:10001 keys/prod-ed25519.pem seed.prod.toml
 chmod 600 keys/prod-ed25519.pem seed.prod.toml
 chmod 644 keys/prod-ed25519.pub.pem
 chmod -R a+rX scripts/initdb   # pg 容器的 initdb 要读
+# 要可执行:不可执行的 .sh 会被 initdb 入口 source 进它自己的 shell(set -eu 会带进去),可执行的才单独跑。
+chmod a+x scripts/initdb/*.sh
 
 # ── 数据库 role ────────────────────────────────────────
 # initdb 只在空卷首次启动时跑;老卷上后来新加的 schema(如 ops)靠这一步补上。可重复执行,
@@ -82,6 +90,11 @@ step "起数据库并补齐各 schema 的 role"
 # 脚本从标准输入喂进去,不依赖 pg 容器里的挂载(升级时挂载可能还是旧内容)。
 "${COMPOSE[@]}" exec -T pg bash -s < scripts/initdb/00-roles-schemas.sh 2>&1 | grep -Ev '^(NOTICE|ALTER ROLE|CREATE SCHEMA)' | sed 's/^/  /' \
   || die "补齐 role 失败"
+# 多租户账号拆分(**必须在迁移之前**):app / content / search 各拆成 owner(迁移、拥有表)/ 运行时(只有 DML,
+# 受 RLS 约束)/ system(BYPASSRLS)。老库里表归运行时账号,这里转给 owner;数据不动,可重复执行。
+"${COMPOSE[@]}" exec -T pg bash -s < scripts/initdb/10-tenancy-roles.sh 2>&1 \
+  | grep -Ev '^(NOTICE|ALTER |CREATE (SCHEMA|ROLE|TABLE)|GRANT|REVOKE)' | sed 's/^/  /' \
+  || die "拆分数据库账号失败"
 
 # ── 启动 ───────────────────────────────────────────────
 step "启动全部服务(迁移是一次性任务,app / idm 等它完成),等健康检查"
@@ -108,6 +121,27 @@ up_or_die
 if [ "${#recreate[@]}" -gt 0 ]; then
   echo "  nginx 配置有变化(或之前没在跑),重建 nginx"
   up_or_die --force-recreate --no-deps nginx
+fi
+
+# ── search 读模型回填 ──────────────────────────────────
+# 从多租户之前的版本升级时,search 迁移 0003 建出的账号目录 / 租户成员索引是空的,投影器只处理之后的新事件:
+# 要用 rebuild_search 从 idm + profile 的当前状态全量回填一次(幂等;投影漂移时也可以手动跑)。
+# 自动判断:有存活账号但账号目录为空,或有成员关系但成员索引为空 → 跑;DEPLOY_REBUILD_SEARCH=1 强制跑。
+# 查询用 pg 容器里的超级用户(不受 RLS 约束)。同一镜像覆盖 entrypoint,环境变量同 app 进程,另补 search 库地址。
+step "检查 search 读模型"
+need_rebuild="$("${COMPOSE[@]}" exec -T pg sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "
+  select exists (select 1 from idm.users where deleted_at is null)
+     and (not exists (select 1 from search.account_index)
+          or (exists (select 1 from idm.tenant_members) and not exists (select 1 from search.admin_user_index)))"' | tr -d '[:space:]')" \
+  || die "查询 search 读模型状态失败"
+if [ "$need_rebuild" = t ] || [ "${DEPLOY_REBUILD_SEARCH:-}" = 1 ]; then
+  echo "  回填账号目录 / 成员索引(rebuild_search)"
+  "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint rebuild_search \
+    -e SEARCH_DB_HOST=pg -e SEARCH_DB_PORT=5432 app 2>&1 | sed 's/^/  /' \
+    || die "rebuild_search 失败(服务已启动,但后台成员列表 / 账号列表可能是空的)。排查后在 $DEPLOY_DIR 重跑:
+  docker compose -p $NAME -f docker-compose.prod.yml -f compose.web.yml run --rm --no-deps -T --entrypoint rebuild_search -e SEARCH_DB_HOST=pg -e SEARCH_DB_PORT=5432 app"
+else
+  echo "  已就绪,跳过(要强制回填:DEPLOY_REBUILD_SEARCH=1)"
 fi
 sha256sum nginx.conf | cut -d' ' -f1 > "$STAMP"
 
