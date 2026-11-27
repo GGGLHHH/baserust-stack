@@ -2,7 +2,7 @@
 
 baserust 全家桶的总仓库：用 git submodule 把五个独立仓库挂在一起，固定「这一组版本能一起跑」，并提供一个 VS Code 多根工作区。
 
-本仓库**不放业务代码**，只有指针（`.gitmodules` + 各子模块的提交号）、工作区文件和这份说明。各仓库照旧独立开发、独立发版。
+本仓库**不放业务代码**，只有指针（`.gitmodules` + 各子模块的提交号）、工作区文件、整栈的 compose / 部署脚本（`compose.yaml`、`deploy/`、`scripts/`）和这份说明。各仓库照旧独立开发、独立发版。
 
 ## 成员
 
@@ -19,11 +19,11 @@ baserust 全家桶的总仓库：用 git submodule 把五个独立仓库挂在�
 ```
 basereact ──npm ^x.y──▶ cadenza            (@gedatou/cadenza-ui / -form / -utils)
 basereact ──OpenAPI───▶ baserust           (vite dev 代理 + codegen 读 /api-docs/openapi.json)
-baserust  ──git tag───▶ rust-idm           (Cargo.toml: idm = { git, tag })
-baserust  ──git tag───▶ rust-content       (Cargo.toml: content = { git, tag })
+baserust  ──git rev───▶ rust-idm           (Cargo.toml: idm = { git, tag / rev })
+baserust  ──git rev───▶ rust-content       (Cargo.toml: content = { git, tag / rev })
 ```
 
-子模块只负责「放在一起、版本对齐」，**不改变上面的依赖方式**：baserust 构建时仍从 GitHub 按 tag 拉 idm / content，basereact 仍从 npm 装 cadenza。
+子模块只负责「放在一起、版本对齐」，**不改变上面的依赖方式**：baserust 构建时仍从 GitHub 按 Cargo.lock 锁的提交拉 idm / content，basereact 仍从 npm 装 cadenza。
 
 ## 一键启动（Docker）
 
@@ -121,7 +121,7 @@ git config submodule.recurse true
 
 ### 后端改库（baserust ↔ rust-idm / rust-content）
 
-baserust 默认按 git tag 依赖两个库，**不会**用到这里的本地目录。要连库一起改，临时把 `baserust/Cargo.toml` 改成 path 依赖：
+baserust 默认按 git 提交（tag / rev）依赖两个库，**不会**用到这里的本地目录。要连库一起改，临时把 `baserust/Cargo.toml` 改成 path 依赖：
 
 ```toml
 idm     = { path = "../rust-idm" }
@@ -135,7 +135,7 @@ content = { path = "../rust-content" }
 
 ### 前端连后端（basereact ↔ baserust）
 
-basereact `.env` 里的 `BACKEND_ORIGIN` 要和 baserust `.env` 的 `BIND_ADDR` 一致（默认 `8080`），否则 dev 代理和 `pnpm generate` 都会打空。
+basereact `.env` 里的 `BACKEND_ORIGIN` 要和 baserust `.env` 的 `BIND_ADDR` 一致（两边的 `.env.example` 都是 `8137`），否则 dev 代理和 `pnpm generate` 都会打空。
 
 ### 前端改组件库（basereact ↔ cadenza）
 
@@ -145,5 +145,5 @@ basereact 从 npm 装 cadenza。要试未发布的改动，可以在 basereact �
 
 总仓库每个提交 = 一组已知能一起工作的版本。提交指针前至少确认：
 
-- baserust `Cargo.toml` 里锁的 idm / content tag，与 `rust-idm/`、`rust-content/` 指向的提交一致（或更新）。
+- baserust `Cargo.toml` 里锁的 idm / content tag / rev，与 `rust-idm/`、`rust-content/` 指向的提交一致（或更新）。
 - basereact `package.json` 里的 cadenza 版本范围，覆盖了 `cadenza/` 当前发布的版本。

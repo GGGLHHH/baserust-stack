@@ -16,7 +16,7 @@ baserust-stack ──── 起项目时复制历史 ────▶ shop-stack 
 
 - **后端、前端、总仓库**:项目各有一份,带着底座的完整提交历史 —— 有共同历史,git 才能三方合并,
   底座的更新才能一次次合进来。
-- **库**(rust-idm、rust-content、cadenza):项目不复制,和底座用同一个仓库、同一个版本(后端按 git tag、
+- **库**(rust-idm、rust-content、cadenza):项目不复制,和底座用同一个仓库、同一个版本(后端按 git tag / rev、
   前端按 npm 版本)。项目需要改库,就去改库本身、发新版。
 - 不用 GitHub 的 fork:公开仓库的 fork 不能设成私有。
 
@@ -79,7 +79,7 @@ gh auth status                                  # 需要 GitHub CLI 已登录
    脚本里的路径。改名会让底座之后对这些文件的每次改动都冲突。对外的名字全靠参数:项目名(`--name`)、
    品牌文件、`.env.prod` 里的域名和端口。
 2. **业务代码放新文件**:后端照 `widget` 加 `crates/core/src/features/<模块>/` + `src/features/<模块>/`,
-   只在 4 处装配(`features/mod.rs`、`app/state.rs`、`app/router.rs`、`infra/openapi.rs`)各加一两行;
+   只在 4 处装配(`features/mod.rs`、`app/app_state.rs`、`app/router.rs`、`infra/openapi.rs`)各加一两行;
    前端放 `src/business/<模块>/`、`src/routes/admin/_shell/<模块>/`。
 3. **项目的迁移从 1000 开始编号**(`migrations/app/1000_create_orders.up.sql`…):底座用 0001–0999,
    两边各加迁移时编号不会撞。sqlx 按编号顺序执行还没跑过的迁移,底座后来加的 00xx 照样会执行。
@@ -105,7 +105,7 @@ gh auth status                                  # 需要 GitHub CLI 已登录
   `check (tenant_id <> '00000000-0000-0000-0000-000000000000')` → 唯一 / 列表索引以 `tenant_id` 打头 →
   `enable` + `force row level security` + `tenant_isolation` 策略(USING 与 WITH CHECK 都写
   `tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid`)。**回填必须在开 RLS 之前**。
-  代码照 widget 改:repo 方法收 `TenantId`,PG 实现用 `infra::pg::tenant_tx(&pool, tenant)` 开事务、SQL 里再写
+  代码照 widget 改:repo 方法收 `TenantId`,PG 实现用 `infra::pg::tenant_transaction(&pool, tenant)` 开事务、SQL 里再写
   `tenant_id = $1`;内存实现按租户过滤;handler 用 `CurrentTenant` 提取器取租户(只从 token 来);
   事件带 `tenant_id`、SSE 逐帧过滤;`tests/http_<模块>.rs` 加跨租户黑盒测试(别的组织的 id → 404、列表只见本组织)。
   细节见 `baserust/.claude/skills/adding-a-feature`。
