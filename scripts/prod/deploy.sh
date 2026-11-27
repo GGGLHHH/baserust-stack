@@ -2,8 +2,8 @@
 # 一键部署。由 build.sh 打出的 <项目名>-deploy_<时间>.run 解包后自动调用,不用手动执行。
 #
 # 检查 → 载入镜像(部署包旁边 images/ 下有的才载入,没有的沿用本机已有的)→ 把配置装到 DEPLOY_DIR
-# → 起数据库并补齐各 schema 的 role、拆分多租户账号 → up -d 并等全部健康检查通过
-# → search 读模型为空时回填(rebuild_search,多租户升级后第一次部署)。首次部署和升级都是这一条。
+# → 起数据库;从多租户之前的版本升级时先停 app / idm → 补齐各 schema 的 role、拆分多租户账号
+# → up -d 并等全部健康检查通过 → 多租户升级后回填 search 读模型(rebuild_search)。首次部署和升级都是这一条。
 # 数据(DEPLOY_DIR/data 下的 postgres / minio / nats)不会被动。
 # compose 项目名取 .env 的 COMPOSE_PROJECT_NAME:同一台服务器上多个项目各用各的名字、端口和目录。
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -87,6 +87,26 @@ chmod a+x scripts/initdb/*.sh
 # 已有的跳过,密码按 .env 重设(.env 是密码的唯一来源)。
 step "起数据库并补齐各 schema 的 role"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 120 pg || { "${COMPOSE[@]}" logs --tail=50 pg; die "数据库起不来"; }
+
+# 是不是从多租户之前的版本升级:**在拆账号、迁移、起新服务之前**看库的结构(idm 里有账号表、还没有成员关系表),
+# 不看读模型是不是空的 —— 服务一起来投影器就会往成员索引写行(有人注册、seed 加成员),「空表」判据就失效了。
+# 是的话:
+#   - 先停 app / idm:迁移(开 RLS、改属主)期间旧版本还在服务的话,读到空、写入被拒,还会注册出没有组织成员
+#     关系的账号(旧版本不建成员关系,回填之后也补不上)。下面 up -d 会把它们以新版本拉起来。
+#   - 留一个标记文件,服务起来后据此跑 rebuild_search;回填成功才删。部署中途失败,标记留着,下次部署接着回填
+#     (那时库已经是新结构,靠结构判断不出来了)。
+REBUILD_MARK=.pending-rebuild-search
+upgrade_from_single_tenant="$("${COMPOSE[@]}" exec -T pg sh -c \
+  'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v idm="${IDM_DB_USER:-idm}" -tA' <<'SQL' | tr -d '[:space:]'
+select to_regclass(format('%I.users', :'idm')) is not null
+   and to_regclass(format('%I.tenant_members', :'idm')) is null;
+SQL
+)" || die "查询数据库结构失败"
+if [ "$upgrade_from_single_tenant" = t ]; then
+  echo "  从多租户之前的版本升级:先停 app / idm(迁移完成、新版本起来之前不对外服务),部署完回填 search 读模型"
+  : >"$REBUILD_MARK"
+  "${COMPOSE[@]}" stop app idm || die "停 app / idm 失败"
+fi
 # 脚本从标准输入喂进去,不依赖 pg 容器里的挂载(升级时挂载可能还是旧内容)。
 "${COMPOSE[@]}" exec -T pg bash -s < scripts/initdb/00-roles-schemas.sh 2>&1 | grep -Ev '^(NOTICE|ALTER ROLE|CREATE SCHEMA)' | sed 's/^/  /' \
   || die "补齐 role 失败"
@@ -124,24 +144,21 @@ if [ "${#recreate[@]}" -gt 0 ]; then
 fi
 
 # ── search 读模型回填 ──────────────────────────────────
-# 从多租户之前的版本升级时,search 迁移 0003 建出的账号目录 / 租户成员索引是空的,投影器只处理之后的新事件:
-# 要用 rebuild_search 从 idm + profile 的当前状态全量回填一次(幂等;投影漂移时也可以手动跑)。
-# 自动判断:有存活账号但账号目录为空,或有成员关系但成员索引为空 → 跑;DEPLOY_REBUILD_SEARCH=1 强制跑。
-# 查询用 pg 容器里的超级用户(不受 RLS 约束)。同一镜像覆盖 entrypoint,环境变量同 app 进程,另补 search 库地址。
-step "检查 search 读模型"
-need_rebuild="$("${COMPOSE[@]}" exec -T pg sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "
-  select exists (select 1 from idm.users where deleted_at is null)
-     and (not exists (select 1 from search.account_index)
-          or (exists (select 1 from idm.tenant_members) and not exists (select 1 from search.admin_user_index)))"' | tr -d '[:space:]')" \
-  || die "查询 search 读模型状态失败"
-if [ "$need_rebuild" = t ] || [ "${DEPLOY_REBUILD_SEARCH:-}" = 1 ]; then
+# 从多租户之前的版本升级时,search 迁移 0003 建出的租户成员索引是空的(账号目录也只有旧投影的内容),投影器只处理
+# 之后的新事件:要用 rebuild_search 从 idm + profile 的当前状态全量回填一次(幂等;投影漂移时也可以手动跑)。
+# 跑不跑看上面迁移前留的标记(升级那次 / 上次回填没成功),DEPLOY_REBUILD_SEARCH=1 强制跑。
+# 同一镜像覆盖 entrypoint,环境变量同 app 进程,另补 search 库地址。
+step "search 读模型"
+if [ -e "$REBUILD_MARK" ] || [ "${DEPLOY_REBUILD_SEARCH:-}" = 1 ]; then
   echo "  回填账号目录 / 成员索引(rebuild_search)"
   "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint rebuild_search \
     -e SEARCH_DB_HOST=pg -e SEARCH_DB_PORT=5432 app 2>&1 | sed 's/^/  /' \
-    || die "rebuild_search 失败(服务已启动,但后台成员列表 / 账号列表可能是空的)。排查后在 $DEPLOY_DIR 重跑:
+    || die "rebuild_search 失败(服务已启动,但后台成员列表 / 账号列表可能缺人)。排查后重新部署会自动再跑;
+  也可以在 $DEPLOY_DIR 手动跑(成功后删掉 $DEPLOY_DIR/$REBUILD_MARK):
   docker compose -p $NAME -f docker-compose.prod.yml -f compose.web.yml run --rm --no-deps -T --entrypoint rebuild_search -e SEARCH_DB_HOST=pg -e SEARCH_DB_PORT=5432 app"
+  rm -f "$REBUILD_MARK"
 else
-  echo "  已就绪,跳过(要强制回填:DEPLOY_REBUILD_SEARCH=1)"
+  echo "  不需要回填,跳过(要强制回填:DEPLOY_REBUILD_SEARCH=1)"
 fi
 sha256sum nginx.conf | cut -d' ' -f1 > "$STAMP"
 

@@ -131,8 +131,27 @@ app / content / search 各拆成三个账号:`<schema>_owner`(跑迁移、拥有
   search(`rebuild_search`)。详见 [scripts/prod/README.md](../scripts/prod/README.md)「从多租户之前的版本升级」。
 - **授权**:运行时 / system 账号的 DML 是靠 owner 上的 `ALTER DEFAULT PRIVILEGES` 自动拿到的 —— 项目迁移(以 owner 身份)
   建的新表不用自己 `grant`。反过来,要收紧的表自己收:比如只许 system 账号写的全局读模型,在迁移里
-  `revoke insert, update, delete on <表> from <运行时账号>`(底座的 `search.account_index`、`search.auth_event` 在 `10-tenancy-roles.sh` 第 6 步收)。
-  项目要是在迁移以外手工建过表 / 改过属主,再跑一次 `just db-ensure-roles` 会把它们转给 owner。
+  `revoke insert, update, delete on <表> from <运行时账号>`。收紧**一直有效**:`10-tenancy-roles.sh`(每次部署 /
+  `just db-ensure-roles` 都跑)只给**这次才从别的属主转给 `<schema>_owner` 的表**补授 DML(老库升级那一次),
+  已经归 owner 的表不再重授。底座的 search 账号目录 / 认证审计(`account_index`、`auth_event`,schema 名是
+  `SEARCH_DB_USER`)在 search 迁移 0003 和脚本第 6 步都收。运行时账号名可配,迁移里别写死,照 search 0003 的写法按
+  「非 owner、非 BYPASSRLS 的账号」收。
+  项目要是在迁移以外手工建过表 / 改过属主,再跑一次 `just db-ensure-roles` 会把它们转给 owner 并补授 DML(之后要收紧的再收一次)。
+  回归测试:`baserust/scripts/tests/tenancy-roles.test.sh`。
+- **换 system 账号要手动补授老表**:已经拆过账号的库上改了 `*_DB_SYSTEM_USER`(换名),或者把 system 账号删了重建
+  (同名也算:删账号时授权和 default privileges 一起没了),再跑 `just db-ensure-roles` / 部署**不会**给老表补授 ——
+  `10-tenancy-roles.sh` 只建账号、给 schema 的 USAGE、补上以后新表的 default privileges,老表早已归 owner,不在
+  「这次才转过来」的范围里。新 system 账号拿不到老表的 DML,后台任务 / 投影器一跑就 `permission denied`。
+  用 superuser 或 owner,在每个拆过的 schema(app / content / search)上手动补:
+
+  ```sql
+  grant select, insert, update, delete on all tables in schema <schema> to <新 system>;
+  grant usage, select on all sequences in schema <schema> to <新 system>;
+  revoke insert, update, delete on <schema>._sqlx_migrations from <新 system>;  -- 迁移台账照旧只读
+  ```
+
+  项目迁移里对 system 账号收紧过的表,补完再收一次。换名时旧账号还留着老授权和 default privileges,不用了就
+  `drop owned by <旧 system>; drop role <旧 system>;`。运行时账号(`*_DB_USER`)换名 / 重建同理。
 - 旧数据全部归进默认组织(`default`):账号成为它的成员、原有角色复制成成员角色、超管兼任它的管理员。
 
 ### 4. 前端
